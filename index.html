@@ -508,8 +508,9 @@ $("dl").addEventListener("click", () => {
 
 // ---- main -------------------------------------------------------------------
 let running = false;
+let pending = null; // latest search requested while another one was running
 async function run(name, griis = false) {
-  if (running) return;
+  if (running) { pending = [name, griis]; return; }
   running = true;
   $("go").disabled = true;
   try {
@@ -561,8 +562,14 @@ async function run(name, griis = false) {
   } finally {
     running = false;
     $("go").disabled = false;
+    if (pending) { const [n, g] = pending; pending = null; run(n, g); }
   }
 }
+
+// toggling GRIIS reruns the search when a name is present
+$("griis").addEventListener("change", () => {
+  if ($("q").value.trim()) $("f").requestSubmit();
+});
 
 $("f").addEventListener("submit", (e) => {
   e.preventDefault();
