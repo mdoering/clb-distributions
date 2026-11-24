@@ -64,6 +64,14 @@
   .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
   .maplibregl-popup-content { color: #1d2421; font-size: .85rem; max-height: 260px; overflow-y: auto; }
   #results[hidden] { display: none; }
+  .howto { margin-top: 40px; }
+  .howto h3 { font-size: 1rem; margin: 20px 0 6px; }
+  .howto p, .howto li { font-size: .92rem; }
+  pre { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 10px 64px 10px 12px; overflow-x: auto; font-size: .8rem; line-height: 1.5; margin: 6px 0 10px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  p code, li code, td code { font-size: .85em; background: var(--accent-bg); padding: 0 4px; border-radius: 3px; }
+  pre .copy { position: absolute; top: 6px; right: 6px; padding: 2px 8px; font-size: .75rem; }
   footer { margin-top: 48px; color: var(--muted); font-size: .8rem; }
 </style>
 </head>
@@ -89,6 +97,8 @@
     <div id="map"></div>
     <div class="legend" id="legend"></div>
     <div class="toolbar">
+      <span id="gbifwrap" class="switch" hidden><label class="switch" style="padding:0"><input id="gbifcb" type="checkbox" checked>
+        GBIF occurrences</label> <span id="gbiflabel"></span></span>
       <button class="secondary" id="dl" type="button">Download JSON</button>
       <span class="muted" id="dlinfo"></span>
     </div>
@@ -102,8 +112,67 @@
     <div id="excluded"></div>
   </section>
 
+  <details class="howto" id="howto">
+    <summary>How to get the distribution data from the API yourself</summary>
+    <div class="body">
+    <p>Everything on this page comes from public, keyless JSON APIs that allow cross-origin requests.
+      The examples use <em>Pterois miles</em> against the production API <code>https://api.checklistbank.org</code>;
+      <code>jq</code> is only used to trim the output. API docs: <a href="https://api.checklistbank.org" target="_blank" rel="noopener">api.checklistbank.org</a>.</p>
+
+    <h3>1. Find every dataset with the name</h3>
+    <p>The cross dataset search is the dataset independent <code>/nameusage/search</code>. <code>type=EXACT</code> with
+      <code>content=SCIENTIFIC_NAME</code> matches the full name only. Page with <code>offset</code>; <code>limit</code> is at most 1000.</p>
+<pre><code>curl -s 'https://api.checklistbank.org/nameusage/search?q=Pterois%20miles&amp;content=SCIENTIFIC_NAME&amp;type=EXACT&amp;limit=1000' \
+  | jq '.total, (.result[].usage | {datasetKey, id, status, accepted: .accepted.id, nidx: .name.namesIndexId})'</code></pre>
+    <p>Just the dataset keys: <code>limit=0&amp;facet=datasetKey&amp;facetLimit=1000</code>, then read <code>.facets.datasetKey[].value</code>.
+      For GRIIS only, add <code>publisherKey=cdef28b1-db4e-4c58-aa71-3c5238c2d0b5</code> (ISSG).</p>
+
+    <h3>2. Decide which datasets to use</h3>
+<pre><code>curl -s 'https://api.checklistbank.org/dataset/2011/simple' | jq '{key, origin, sourceKey, alias, title, version}'</code></pre>
+    <p><code>origin</code> is <code>external</code>, <code>project</code>, <code>release</code> or <code>xrelease</code>; <code>sourceKey</code> is a release's project.
+      This page keeps every <code>external</code> dataset and, for each project, only the release with the highest key among the hits, preferring
+      <code>xrelease</code>. It drops projects and the legacy COL Annual Checklists (external datasets with alias <code>COL00</code>–<code>COL19</code>).
+      <code>/dataset/3LXR/simple</code> resolves the newest COL XRelease if you need it directly.</p>
+
+    <h3>3. Get the distribution records</h3>
+    <p>Distributions hang off the accepted taxon. Use the usage <code>id</code> when its status is accepted, otherwise <code>accepted.id</code>.
+      URL-encode the id; many contain <code>:</code> or <code>/</code>.</p>
+<pre><code>curl -s 'https://api.checklistbank.org/dataset/2011/taxon/urn%3Alsid%3Amarinespecies.org%3Ataxname%3A218077/distribution' \
+  | jq '.[] | {area, establishmentMeans, degreeOfEstablishment, threatStatus}'</code></pre>
+    <p>Each record has an <code>area</code> with <code>gazetteer</code>, <code>id</code>, <code>name</code> and <code>globalId</code> (<code>gazetteer:id</code>).
+      <code>gazetteer: "text"</code> means a free-text area with no shape. The others (<code>iso</code>, <code>tdwg</code>, <code>mrgid</code>, <code>fao</code>, …) are gazetteer areas.</p>
+    <p>Shortcut, undocumented: <code>/nameusage/distribution?nidx={namesIndexId}&amp;limit=1000</code> returns the distributions of all usages with that
+      names-index id across all datasets in one call, including projects and every release. You then have to filter by <code>datasetKey</code> yourself.</p>
+
+    <h3>4. Get the area shapes</h3>
+<pre><code>curl -s 'https://api.checklistbank.org/vocab/area/mrgid:7963.geojson' | jq '.properties'
+# or by content negotiation
+curl -s -H 'Accept: application/geo+json' 'https://api.checklistbank.org/vocab/area/iso:CY' | jq '.properties.name'</code></pre>
+    <p>Returns one GeoJSON Feature; 404 means the gazetteer has no shape for that id. <code>/vocab/area/mrgid:7963</code> as plain JSON gives the area's metadata.</p>
+
+    <h3>5. GBIF occurrences</h3>
+    <p>GBIF indexes occurrences against the Catalogue of Life as checklist <code>7ddf754f-d193-4cc9-b351-99906754a03b</code>, keyed by COL taxon ids.
+      Look up the COL id in the newest XRelease, then use it as GBIF <code>taxonKey</code>:</p>
+<pre><code>curl -s 'https://api.checklistbank.org/dataset/3LXR/nameusage/search?q=Pterois%20miles&amp;content=SCIENTIFIC_NAME&amp;type=EXACT' \
+  | jq '.result[].usage | {id, status, accepted: .accepted.id}'     # → 4PWV4
+
+curl -s 'https://api.gbif.org/v1/occurrence/search?checklistKey=7ddf754f-d193-4cc9-b351-99906754a03b&amp;taxonKey=4PWV4&amp;hasCoordinate=true&amp;hasGeospatialIssue=false&amp;occurrenceStatus=PRESENT&amp;limit=0' \
+  | jq .count</code></pre>
+    <p>The map layer uses GBIF's density tiles, as on catalogueoflife.org:</p>
+<pre><code>https://api.gbif.org/v2/map/occurrence/density/{z}/{x}/{y}@1x.png?srs=EPSG%3A3857&amp;style=iNaturalist.poly&amp;bin=hex&amp;hexPerTile=64&amp;hasCoordinate=true&amp;hasGeospatialIssue=false&amp;occurrenceStatus=PRESENT&amp;checklistKey=7ddf754f-d193-4cc9-b351-99906754a03b&amp;taxonKey=4PWV4</code></pre>
+
+    <h3>All in one script</h3>
+    <p><a href="https://github.com/mdoering/clb-distributions/blob/main/distributions.py" target="_blank" rel="noopener">distributions.py</a>
+      does steps 1–4 with the Python standard library only and writes the records plus a GeoJSON FeatureCollection of the areas:</p>
+<pre><code>curl -sO https://raw.githubusercontent.com/mdoering/clb-distributions/main/distributions.py
+python3 distributions.py "Pterois miles" --griis &gt; distributions.json</code></pre>
+    </div>
+  </details>
+
   <footer>Data from the <a href="https://api.checklistbank.org" id="apilink">ChecklistBank API</a>.
-    Basemap © OpenMapTiles © OpenStreetMap contributors, served by GBIF.</footer>
+    Occurrences from <a href="https://www.gbif.org" target="_blank" rel="noopener">GBIF</a>.
+    Basemap © OpenMapTiles © OpenStreetMap contributors, served by GBIF.
+    Source: <a href="https://github.com/mdoering/clb-distributions" target="_blank" rel="noopener">github.com/mdoering/clb-distributions</a>.</footer>
 </main>
 
 <script>
@@ -116,6 +185,11 @@ const UI = API.includes("api.dev.") ? "https://dev.checklistbank.org"
          : API.includes("api.test.") ? "https://www.test.checklistbank.org"
          : "https://www.checklistbank.org";
 const GRIIS_PUBLISHER = "cdef28b1-db4e-4c58-aa71-3c5238c2d0b5"; // ISSG, publisher of the GRIIS checklists
+const GBIF_API = "https://api.gbif.org";
+const GBIF_CHECKLIST = "7ddf754f-d193-4cc9-b351-99906754a03b"; // Catalogue of Life in GBIF, keyed by COL taxon ids
+const GBIF_FILTER = "hasCoordinate=true&hasGeospatialIssue=false&occurrenceStatus=PRESENT";
+const GBIF_TILES = `${GBIF_API}/v2/map/occurrence/density/{z}/{x}/{y}@1x.png?srs=EPSG%3A3857` +
+  `&style=iNaturalist.poly&bin=hex&hexPerTile=64&${GBIF_FILTER}&checklistKey=${GBIF_CHECKLIST}&taxonKey=`;
 const BASEMAP = "https://cdn.jsdelivr.net/npm/col-browser@2.9.0/basemap/style.json";
 document.getElementById("apilink").href = API;
 
@@ -351,7 +425,7 @@ function popupHtml(area) {
     <div style="color:#888;margin-bottom:4px">${esc(area.globalId)}</div><ul style="margin:0;padding-left:16px">${rows}</ul>`;
 }
 
-async function drawMap(areas, shapes) {
+async function drawMap(areas, shapes, gbif) {
   const m = ensureMap();
   await whenStyleLoaded(m);
   const features = [];
@@ -382,6 +456,7 @@ async function drawMap(areas, shapes) {
     m.on("mouseenter", "dist-fill", () => { m.getCanvas().style.cursor = "pointer"; });
     m.on("mouseleave", "dist-fill", () => { m.getCanvas().style.cursor = ""; });
   }
+  drawGbif(m, gbif);
   const b = computeWrappedBounds(features);
   if (b) m.fitBounds(b, { padding: 30, maxZoom: 6, duration: 0 });
   else m.jumpTo({ center: [0, 20], zoom: 1 });
@@ -394,6 +469,59 @@ function renderLegend(areas) {
     { label: "Datasets disagree", color: MIXED_COLOR }].filter(i => used.has(i.color));
   $("legend").innerHTML = items.map(i => `<span><i style="background:${i.color}"></i>${esc(i.label)}</span>`).join("");
 }
+
+// ---- GBIF occurrences ---------------------------------------------------------
+// The COL taxon id from the newest COL XRelease, independent of the dataset filter
+async function resolveColTaxon(name) {
+  const res = await getJson(`${API}/dataset/3LXR/nameusage/search?q=${encodeURIComponent(name)}&content=SCIENTIFIC_NAME&type=EXACT&limit=50`);
+  const us = (res.result || []).map(r => r.usage);
+  const acc = us.find(u => ACCEPTED.has(u.status));
+  if (acc) return { id: acc.id, label: acc.label };
+  const syn = us.find(u => u.accepted && u.accepted.id);
+  return syn ? { id: syn.accepted.id, label: syn.accepted.label, viaSynonym: true } : null;
+}
+
+async function loadGbif(name) {
+  try {
+    const col = await resolveColTaxon(name);
+    if (!col) return null;
+    const res = await getJson(`${GBIF_API}/v1/occurrence/search?checklistKey=${GBIF_CHECKLIST}&taxonKey=${encodeURIComponent(col.id)}&${GBIF_FILTER}&limit=0`);
+    return { col, count: res.count ?? null,
+      searchUrl: `https://www.gbif.org/occurrence/search?checklist_key=${GBIF_CHECKLIST}&taxon_key=${encodeURIComponent(col.id)}` };
+  } catch (e) {
+    console.warn("GBIF lookup failed", e);
+    return null;
+  }
+}
+
+const readGbifVisible = () => { try { return localStorage.getItem("gbif-visible") !== "false"; } catch { return true; } };
+const writeGbifVisible = (v) => { try { localStorage.setItem("gbif-visible", String(v)); } catch { /* ignore */ } };
+
+function drawGbif(m, gbif) {
+  if (m.getLayer("gbif")) m.removeLayer("gbif");
+  if (m.getSource("gbif")) m.removeSource("gbif");
+  if (!gbif || !gbif.count) return;
+  m.addSource("gbif", { type: "raster", tileSize: 256, tiles: [GBIF_TILES + encodeURIComponent(gbif.col.id)],
+    attribution: `<a href="${esc(gbif.searchUrl)}" target="_blank" rel="noopener">GBIF</a> occurrence data` });
+  m.addLayer({ id: "gbif", type: "raster", source: "gbif", paint: { "raster-opacity": 0.9 },
+    layout: { visibility: $("gbifcb").checked ? "visible" : "none" } });
+}
+
+function renderGbifToggle(gbif) {
+  $("gbifwrap").hidden = !gbif;
+  if (!gbif) return;
+  const n = gbif.count ?? 0;
+  $("gbifcb").disabled = n === 0;
+  $("gbifcb").checked = n > 0 && readGbifVisible();
+  $("gbiflabel").innerHTML = n
+    ? `(${link(gbif.searchUrl, n.toLocaleString("en"))})`
+    : `(none for COL ${esc(gbif.col.id)})`;
+}
+
+$("gbifcb").addEventListener("change", () => {
+  writeGbifVisible($("gbifcb").checked);
+  if (map && map.getLayer("gbif")) map.setLayoutProperty("gbif", "visibility", $("gbifcb").checked ? "visible" : "none");
+});
 
 // ---- rendering --------------------------------------------------------------
 let currentAreas = new Map();
@@ -413,7 +541,7 @@ function recordsSummary(records) {
 }
 
 function render(ctx) {
-  const { name, byDataset, kept, excluded, mappedDatasets, textOnly, noDist, records, areas, shapes } = ctx;
+  const { name, byDataset, kept, excluded, mappedDatasets, textOnly, noDist, records, areas, shapes, gbif } = ctx;
 
   const textRecords = records.filter(isText);
   const mappedRecords = records.filter(r => !isText(r) && mappedDatasets.some(d => d.key === r.datasetKey));
@@ -425,7 +553,10 @@ function render(ctx) {
     [mappedDatasets.length, "with mapped distributions"],
     [areas.length, "distinct areas"],
     [textRecords.length, "text distributions"],
-  ].map(([n, l]) => `<div class="stat"><b>${n}</b><span>${esc(l)}</span></div>`).join("");
+  ].map(([n, l]) => `<div class="stat"><b>${n}</b><span>${esc(l)}</span></div>`).join("") +
+    (gbif ? `<div class="stat"><b>${gbif.count ? link(gbif.searchUrl, gbif.count.toLocaleString("en")) : 0}</b>
+      <span>GBIF occurrences (COL ${link(`${UI}/dataset/3LXR/taxon/${encodeURIComponent(gbif.col.id)}`, gbif.col.id)})</span></div>` : "");
+  renderGbifToggle(gbif);
 
   renderLegend(areas.filter(a => shapes.get(a.globalId)));
 
@@ -490,6 +621,8 @@ function render(ctx) {
     created: new Date().toISOString(),
     datasets: mappedDatasets.map(d => ({ key: d.key, title: d.title, alias: d.alias, origin: d.origin, version: d.version })),
     unmappedAreas: unmapped.map(a => a.globalId),
+    gbif: gbif ? { checklistKey: GBIF_CHECKLIST, colTaxonId: gbif.col.id, colTaxonLabel: gbif.col.label,
+      occurrences: gbif.count, search: gbif.searchUrl } : null,
     records: exportRecords,
   };
   $("dlinfo").textContent = `${exportRecords.length} records (${mappedRecords.length} with areas, ${textRecords.length} text)`;
@@ -506,6 +639,18 @@ $("dl").addEventListener("click", () => {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 });
 
+// copy buttons for the API examples
+document.querySelectorAll("#howto pre").forEach(pre => {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "secondary copy"; b.textContent = "Copy";
+  b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(pre.querySelector("code").textContent); b.textContent = "Copied"; }
+    catch { b.textContent = "Select & copy"; }
+    setTimeout(() => { b.textContent = "Copy"; }, 1500);
+  });
+  pre.appendChild(b);
+});
+
 // ---- main -------------------------------------------------------------------
 let running = false;
 let pending = null; // latest search requested while another one was running
@@ -515,6 +660,7 @@ async function run(name, griis = false) {
   $("go").disabled = true;
   try {
     setStatus("Searching…");
+    const gbifPromise = loadGbif(name); // runs alongside the ChecklistBank calls
     const byDataset = await searchUsages(name, griis);
     if (!byDataset.size) {
       $("results").hidden = true;
@@ -551,9 +697,10 @@ async function run(name, griis = false) {
     const shapes = new Map();
     areas.forEach((a, i) => { const s = shapeList[i]; if (s && !s.error) shapes.set(a.globalId, s); });
 
+    const gbif = await gbifPromise;
     $("results").hidden = false;
-    render({ name, byDataset, kept, excluded, mappedDatasets, textOnly, noDist, records, areas, shapes });
-    await drawMap(areas, shapes);
+    render({ name, byDataset, kept, excluded, mappedDatasets, textOnly, noDist, records, areas, shapes, gbif });
+    await drawMap(areas, shapes, gbif);
     map.resize();
     setStatus(`Done: ${mappedDatasets.length} of ${byDataset.size} ${griis ? "GRIIS " : ""}datasets have mapped distributions for “${name}”.`);
   } catch (e) {

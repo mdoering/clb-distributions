@@ -21,6 +21,18 @@ Live: https://mdoering.github.io/clb-distributions/?q=Pterois%20miles
 
 **Download JSON** exports every aggregated distribution record, with dataset and usage details added.
 
+A **GBIF occurrences** layer shows GBIF's hexagon density tiles on the same map, as on catalogueoflife.org. GBIF is queried through its Catalogue of Life checklist `7ddf754f-d193-4cc9-b351-99906754a03b`, using the COL taxon id from the newest COL XRelease (`/dataset/3LXR/nameusage/search`). The checkbox next to Download JSON switches it on and off.
+
+The page has a collapsible section, **How to get the distribution data from the API yourself**, with a `curl` example for every call it makes.
+
+## Python
+
+`distributions.py` does the same with the Python standard library only. It prints a summary to stderr and writes the records plus a GeoJSON FeatureCollection of the areas:
+
+```
+python3 distributions.py "Pterois miles" [--griis] > distributions.json
+```
+
 ## Parameters
 
 - `q`: the scientific name.
