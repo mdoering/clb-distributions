@@ -30,6 +30,8 @@
   form { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
   input[type=text] { flex: 1 1 260px; font: inherit; padding: 8px 10px; border: 1px solid var(--line);
     border-radius: 6px; background: var(--card); color: var(--fg); }
+  .switch { display: flex; align-items: center; gap: 6px; padding: 0 4px; color: var(--muted); cursor: pointer; user-select: none; }
+  .switch input { width: 16px; height: 16px; accent-color: var(--accent); }
   button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--accent);
     background: var(--accent); color: #fff; cursor: pointer; }
   button.secondary { background: transparent; color: var(--accent); }
@@ -74,6 +76,8 @@
 
   <form id="f">
     <input id="q" type="text" placeholder="Scientific name, e.g. Pterois miles" autocomplete="off" required>
+    <label class="switch" title="Only datasets published by the Invasive Species Specialist Group (ISSG), i.e. the GRIIS checklists">
+      <input id="griis" type="checkbox"> GRIIS only</label>
     <button id="go" type="submit">Search</button>
   </form>
   <div id="status"></div>
@@ -111,6 +115,7 @@ const API = (params.get("api") || "https://api.checklistbank.org").replace(/\/+$
 const UI = API.includes("api.dev.") ? "https://dev.checklistbank.org"
          : API.includes("api.test.") ? "https://www.test.checklistbank.org"
          : "https://www.checklistbank.org";
+const GRIIS_PUBLISHER = "cdef28b1-db4e-4c58-aa71-3c5238c2d0b5"; // ISSG, publisher of the GRIIS checklists
 const BASEMAP = "https://cdn.jsdelivr.net/npm/col-browser@2.9.0/basemap/style.json";
 document.getElementById("apilink").href = API;
 
@@ -175,11 +180,12 @@ async function pool(items, n, fn, onProgress) {
 }
 
 // ---- step 1: cross dataset search ----------------------------------------
-async function searchUsages(name) {
+async function searchUsages(name, griis) {
   const usages = [];
   let offset = 0, total = Infinity;
   while (offset < total) {
-    const u = `${API}/nameusage/search?q=${encodeURIComponent(name)}&content=SCIENTIFIC_NAME&type=EXACT&limit=1000&offset=${offset}`;
+    const u = `${API}/nameusage/search?q=${encodeURIComponent(name)}&content=SCIENTIFIC_NAME&type=EXACT&limit=1000&offset=${offset}` +
+      (griis ? `&publisherKey=${GRIIS_PUBLISHER}` : "");
     const res = await getJson(u);
     total = res.total || 0;
     const page = res.result || [];
@@ -502,16 +508,16 @@ $("dl").addEventListener("click", () => {
 
 // ---- main -------------------------------------------------------------------
 let running = false;
-async function run(name) {
+async function run(name, griis = false) {
   if (running) return;
   running = true;
   $("go").disabled = true;
   try {
     setStatus("Searching…");
-    const byDataset = await searchUsages(name);
+    const byDataset = await searchUsages(name, griis);
     if (!byDataset.size) {
       $("results").hidden = true;
-      setStatus(`No dataset contains the name “${name}”.`);
+      setStatus(`No ${griis ? "GRIIS " : ""}dataset contains the name “${name}”.`);
       return;
     }
     const { kept, excluded } = await classifyDatasets([...byDataset.keys()]);
@@ -548,7 +554,7 @@ async function run(name) {
     render({ name, byDataset, kept, excluded, mappedDatasets, textOnly, noDist, records, areas, shapes });
     await drawMap(areas, shapes);
     map.resize();
-    setStatus(`Done: ${mappedDatasets.length} of ${byDataset.size} datasets have mapped distributions for “${name}”.`);
+    setStatus(`Done: ${mappedDatasets.length} of ${byDataset.size} ${griis ? "GRIIS " : ""}datasets have mapped distributions for “${name}”.`);
   } catch (e) {
     console.error(e);
     setStatus(`Error: ${e.message}`, true);
@@ -562,19 +568,24 @@ $("f").addEventListener("submit", (e) => {
   e.preventDefault();
   const name = $("q").value.trim();
   if (!name) return;
+  const griis = $("griis").checked;
   const p = new URLSearchParams(location.search);
   p.set("q", name);
+  if (griis) p.set("griis", "1"); else p.delete("griis");
   history.pushState(null, "", `?${p}`);
-  run(name);
+  run(name, griis);
 });
 
 window.addEventListener("popstate", () => {
-  const q = new URLSearchParams(location.search).get("q");
-  if (q) { $("q").value = q; run(q); }
+  const p = new URLSearchParams(location.search);
+  const q = p.get("q"), griis = p.get("griis") === "1";
+  $("griis").checked = griis;
+  if (q) { $("q").value = q; run(q, griis); }
 });
 
 const initial = params.get("q");
-if (initial) { $("q").value = initial; run(initial); }
+$("griis").checked = params.get("griis") === "1";
+if (initial) { $("q").value = initial; run(initial, $("griis").checked); }
 </script>
 </body>
 </html>

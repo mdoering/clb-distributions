@@ -24,6 +24,7 @@ Live: https://mdoering.github.io/clb-distributions/?q=Pterois%20miles
 ## Parameters
 
 - `q`: the scientific name.
+- `griis=1`: limits the search to the GRIIS checklists, using `publisherKey=cdef28b1-db4e-4c58-aa71-3c5238c2d0b5` (ISSG). The page has a "GRIIS only" switch for this.
 - `api`: the API base URL, default `https://api.checklistbank.org`. For example `?api=https://api.test.checklistbank.org`; links then point to the matching ChecklistBank UI.
 
 ## Run locally
