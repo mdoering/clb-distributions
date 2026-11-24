@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Species Distributions</title>
+<meta name="description" content="Aggregate distribution records for a species across all ChecklistBank datasets.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ccircle cx=%228%22 cy=%228%22 r=%227%22 fill=%22%231f6f50%22/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1d2421; --muted: #66706b; --line: #dfe3e0;
+    --card: #ffffff; --accent: #1f6f50; --accent-bg: #e7f2ec; --warn: #9a5b00;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141816; --fg: #e4e8e5; --muted: #98a29d; --line: #2d3430;
+      --card: #1b201d; --accent: #6fc49c; --accent-bg: #1f3329; --warn: #e0a54a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); line-height: 1.45; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 1.15rem; margin: 32px 0 8px; }
+  a { color: var(--accent); }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  input[type=text] { flex: 1 1 260px; font: inherit; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--card); color: var(--fg); }
+  button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--accent);
+    background: var(--accent); color: #fff; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { color: var(--muted); min-height: 1.4em; margin: 8px 0 16px; font-size: .95rem; }
+  #status.error { color: #c0392b; }
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 0 0 16px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; }
+  .stat b { display: block; font-size: 1.3rem; }
+  .stat span { color: var(--muted); font-size: .85rem; }
+  #map { height: 480px; border-radius: 8px; border: 1px solid var(--line); background: #e8ecea; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0; font-size: .85rem; color: var(--muted); }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; background: var(--card); }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 8px; margin: 12px 0; }
+  summary { cursor: pointer; padding: 10px 14px; font-weight: 600; }
+  details > .body { padding: 0 14px 12px; }
+  ul.plain { margin: 0; padding-left: 18px; }
+  ul.plain li { margin: 3px 0; }
+  .tag { display: inline-block; font-size: .75rem; padding: 1px 6px; border-radius: 4px;
+    background: var(--accent-bg); color: var(--accent); margin-left: 4px; white-space: nowrap; }
+  .tag.warn { background: transparent; color: var(--warn); border: 1px solid currentColor; }
+  .ds { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 10px 0; }
+  .ds h3 { font-size: 1rem; margin: 0 0 4px; }
+  .ds .meta { color: var(--muted); font-size: .85rem; margin-bottom: 6px; }
+  .muted { color: var(--muted); }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+  .maplibregl-popup-content { color: #1d2421; font-size: .85rem; max-height: 260px; overflow-y: auto; }
+  #results[hidden] { display: none; }
+  footer { margin-top: 48px; color: var(--muted); font-size: .8rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Species Distributions</h1>
+  <p class="sub">Distribution records for a scientific name across every
+    <a href="https://www.checklistbank.org" target="_blank" rel="noopener">ChecklistBank</a> dataset.
+    It keeps external datasets and the newest release of each project (for COL, its newest XRelease). It leaves out projects, older releases and the legacy COL Annual Checklists.</p>
+
+  <form id="f">
+    <input id="q" type="text" placeholder="Scientific name, e.g. Pterois miles" autocomplete="off" required>
+    <button id="go" type="submit">Search</button>
+  </form>
+  <div id="status"></div>
+
+  <section id="results" hidden>
+    <div class="stats" id="stats"></div>
+
+    <h2>Aggregated distribution</h2>
+    <div id="map"></div>
+    <div class="legend" id="legend"></div>
+    <div class="toolbar">
+      <button class="secondary" id="dl" type="button">Download JSON</button>
+      <span class="muted" id="dlinfo"></span>
+    </div>
+
+    <div id="unmapped"></div>
+    <div class="table-wrap"><table id="areas"></table></div>
+    <div id="texts"></div>
+
+    <h2>Datasets with mapped distributions</h2>
+    <div id="datasets"></div>
+    <div id="excluded"></div>
+  </section>
+
+  <footer>Data from the <a href="https://api.checklistbank.org" id="apilink">ChecklistBank API</a>.
+    Basemap © OpenMapTiles © OpenStreetMap contributors, served by GBIF.</footer>
+</main>
+
+<script>
+"use strict";
+
+// ---- configuration --------------------------------------------------------
+const params = new URLSearchParams(location.search);
+const API = (params.get("api") || "https://api.checklistbank.org").replace(/\/+$/, "");
+const UI = API.includes("api.dev.") ? "https://dev.checklistbank.org"
+         : API.includes("api.test.") ? "https://www.test.checklistbank.org"
+         : "https://www.checklistbank.org";
+const BASEMAP = "https://cdn.jsdelivr.net/npm/col-browser@2.9.0/basemap/style.json";
+document.getElementById("apilink").href = API;
+
+// Colours as in the ChecklistBank taxon distribution map
+const MEANS = [
+  { key: "nativeendemic", label: "Native endemic", color: "#0F8554" },
+  { key: "native", label: "Native", color: "#87C55F" },
+  { key: "nativereintroduced", label: "Native reintroduced", color: "#C9DB74" },
+  { key: "introduced", label: "Introduced", color: "#FE88B1" },
+  { key: "introducedassistedcolonisation", label: "Introduced assisted colonisation", color: "#DCB0F2" },
+  { key: "vagrant", label: "Vagrant", color: "#F6CF71" },
+  { key: "uncertain", label: "Uncertain", color: "#8BE0A4" },
+];
+const MEANS_COLOR = Object.fromEntries(MEANS.map(m => [m.key, m.color]));
+const MISSING_COLOR = "#66C5CC";   // no establishment means given
+const MIXED_COLOR = "#8E7CC3";     // datasets disagree
+
+const meansKey = (v) => {
+  if (v == null || v === "") return null;
+  const k = String(v).toLowerCase().replace(/[^a-z]/g, "");
+  return MEANS_COLOR[k] ? k : "uncertain";
+};
+
+// ---- helpers --------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const link = (href, text) => `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(text)}</a>`;
+const datasetUrl = (k) => `${UI}/dataset/${k}/about`;
+const taxonUrl = (k, id) => `${UI}/dataset/${k}/taxon/${encodeURIComponent(id)}`;
+const nameUrl = (k, id) => `${UI}/dataset/${k}/name/${encodeURIComponent(id)}`;
+const areaUrl = (a) => `${UI}/vocabulary/area/${a.gazetteer}:${encodeURIComponent(a.id)}`;
+const dsLabel = (d) => d.alias || d.title || `Dataset ${d.key}`;
+
+function setStatus(msg, isError = false) {
+  $("status").textContent = msg;
+  $("status").className = isError ? "error" : "";
+}
+
+async function getJson(url, { allow404 = false } = {}) {
+  const r = await fetch(url, { headers: { Accept: "application/json" } });
+  if (allow404 && r.status === 404) return null;
+  if (!r.ok) throw new Error(`${r.status} for ${url}`);
+  return r.json();
+}
+
+// run fn over items with at most n in flight
+async function pool(items, n, fn, onProgress) {
+  const out = new Array(items.length);
+  let next = 0, done = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      try { out[i] = await fn(items[i], i); }
+      catch (e) { out[i] = { error: e }; }
+      done++;
+      if (onProgress) onProgress(done, items.length);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+  return out;
+}
+
+// ---- step 1: cross dataset search ----------------------------------------
+async function searchUsages(name) {
+  const usages = [];
+  let offset = 0, total = Infinity;
+  while (offset < total) {
+    const u = `${API}/nameusage/search?q=${encodeURIComponent(name)}&content=SCIENTIFIC_NAME&type=EXACT&limit=1000&offset=${offset}`;
+    const res = await getJson(u);
+    total = res.total || 0;
+    const page = res.result || [];
+    usages.push(...page.map(r => r.usage));
+    if (page.length === 0) break;
+    offset += page.length;
+    setStatus(`Searching… ${usages.length} of ${total} name usages`);
+  }
+  const byDataset = new Map();
+  for (const u of usages) {
+    if (!byDataset.has(u.datasetKey)) byDataset.set(u.datasetKey, []);
+    byDataset.get(u.datasetKey).push(u);
+  }
+  return byDataset;
+}
+
+// ---- step 2: dataset filter ----------------------------------------------
+const LEGACY_COL = /^COL\d{2}$/;
+async function classifyDatasets(keys) {
+  const metas = await pool(keys, 8, k => getJson(`${API}/dataset/${k}/simple`),
+    (d, n) => setStatus(`Looking up datasets… ${d}/${n}`));
+  const kept = [], excluded = [];
+  const releases = new Map(); // sourceKey -> [meta]
+  metas.forEach((m, i) => {
+    if (!m || m.error) {
+      excluded.push({ key: keys[i], title: `Dataset ${keys[i]}`, reason: "metadata unavailable" });
+    } else if (m.origin === "project") {
+      excluded.push({ ...m, reason: "project" });
+    } else if (m.origin === "external" && LEGACY_COL.test(m.alias || "")) {
+      // COL Annual Checklists 2000-2019 are external datasets; COL is only used via its latest XRelease
+      excluded.push({ ...m, reason: "legacy COL Annual Checklist" });
+    } else if (m.origin === "release" || m.origin === "xrelease") {
+      const sk = m.sourceKey ?? `?${m.key}`;
+      if (!releases.has(sk)) releases.set(sk, []);
+      releases.get(sk).push(m);
+    } else {
+      kept.push(m);
+    }
+  });
+  // per project keep the highest datasetKey, preferring extended releases
+  for (const list of releases.values()) {
+    const xr = list.filter(m => m.origin === "xrelease");
+    const pick = (xr.length ? xr : list).reduce((a, b) => (b.key > a.key ? b : a));
+    for (const m of list) {
+      if (m === pick) kept.push(m);
+      else excluded.push({ ...m, reason: m.origin !== pick.origin ? `release; XRelease ${pick.key} kept` : `older ${m.origin}; ${pick.key} kept` });
+    }
+  }
+  return { kept, excluded };
+}
+
+// ---- step 3: distributions -----------------------------------------------
+const ACCEPTED = new Set(["accepted", "provisionally accepted"]);
+
+async function loadDistributions(datasets, byDataset) {
+  // one job per (dataset, accepted taxon)
+  const jobs = [];
+  for (const d of datasets) {
+    const seen = new Set();
+    for (const u of byDataset.get(d.key) || []) {
+      let taxonId = null, viaSynonym = false;
+      if (ACCEPTED.has(u.status)) taxonId = u.id;
+      else if (u.accepted && u.accepted.id) { taxonId = u.accepted.id; viaSynonym = true; }
+      if (!taxonId || seen.has(taxonId)) continue;
+      seen.add(taxonId);
+      jobs.push({ d, u, taxonId, viaSynonym });
+    }
+  }
+  const results = await pool(jobs, 8,
+    j => getJson(`${API}/dataset/${j.d.key}/taxon/${encodeURIComponent(j.taxonId)}/distribution`, { allow404: true }),
+    (d, n) => setStatus(`Fetching distributions… ${d}/${n}`));
+
+  const records = [];
+  results.forEach((res, i) => {
+    if (!Array.isArray(res)) return;
+    const j = jobs[i];
+    for (const r of res) {
+      records.push({
+        ...r,
+        datasetKey: j.d.key,
+        datasetTitle: j.d.title,
+        datasetAlias: j.d.alias,
+        datasetOrigin: j.d.origin,
+        usageId: j.u.id,
+        usageLabel: j.u.label,
+        usageStatus: j.u.status,
+        taxonId: j.taxonId,
+        viaSynonym: j.viaSynonym,
+      });
+    }
+  });
+  return records;
+}
+
+const isText = (r) => !r.area || !r.area.gazetteer || r.area.gazetteer === "text" || !r.area.id;
+
+// ---- step 4: map -----------------------------------------------------------
+function computeBounds(coordsList) {
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+  const visit = (c) => {
+    if (typeof c[0] === "number") {
+      if (c[0] < minLng) minLng = c[0]; if (c[0] > maxLng) maxLng = c[0];
+      if (c[1] < minLat) minLat = c[1]; if (c[1] > maxLat) maxLat = c[1];
+    } else for (const x of c) visit(x);
+  };
+  for (const c of coordsList) visit(c);
+  return minLng === Infinity ? null : [[minLng, minLat], [maxLng, maxLat]];
+}
+
+function geometryParts(g) {
+  switch (g?.type) {
+    case "Polygon": return [g.coordinates];
+    case "MultiPolygon": return g.coordinates;
+    case "Point": case "MultiPoint": case "LineString": case "MultiLineString": return [g.coordinates];
+    case "GeometryCollection": return (g.geometries || []).flatMap(geometryParts);
+    default: return [];
+  }
+}
+
+// Bounds that handle shapes crossing the antimeridian, as in the CLB UI (geo.js)
+function computeWrappedBounds(features) {
+  const extents = features.flatMap(f => geometryParts(f.geometry))
+    .map(p => computeBounds([p])).filter(Boolean);
+  if (!extents.length) return null;
+  const minLat = Math.min(...extents.map(([sw]) => sw[1]));
+  const maxLat = Math.max(...extents.map(([, ne]) => ne[1]));
+  const sorted = extents.map(([sw, ne]) => [sw[0], ne[0]]).sort((a, b) => a[0] - b[0]);
+  const reach = Math.max(...sorted.map(([, e]) => e));
+  let widestGap = sorted[0][0] + 360 - reach, west = sorted[0][0], east = reach, covered = sorted[0][1];
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i][0] - covered;
+    if (gap > widestGap) { widestGap = gap; west = sorted[i][0]; east = covered + 360; }
+    covered = Math.max(covered, sorted[i][1]);
+  }
+  return [[west, minLat], [east, maxLat]];
+}
+
+let map = null;
+function ensureMap() {
+  if (map) return map;
+  map = new maplibregl.Map({ container: "map", style: BASEMAP, center: [0, 20], zoom: 1, attributionControl: { compact: true } });
+  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+  return map;
+}
+
+function whenStyleLoaded(m) {
+  return m.isStyleLoaded() ? Promise.resolve() : new Promise(r => m.once("load", r));
+}
+
+function areaColor(area) {
+  const keys = new Set(area.records.map(r => meansKey(r.establishmentMeans) ?? "none"));
+  if (keys.size > 1) return MIXED_COLOR;
+  const k = [...keys][0];
+  return k === "none" ? MISSING_COLOR : MEANS_COLOR[k];
+}
+
+function popupHtml(area) {
+  const rows = area.records.map(r => {
+    const means = [r.establishmentMeans, r.degreeOfEstablishment, r.threatStatus].filter(Boolean).join(", ");
+    return `<li>${esc(r.datasetAlias || r.datasetTitle)}${means ? ` — ${esc(means)}` : ""}</li>`;
+  }).join("");
+  return `<div style="font-weight:600">${esc(area.name || area.globalId)}</div>
+    <div style="color:#888;margin-bottom:4px">${esc(area.globalId)}</div><ul style="margin:0;padding-left:16px">${rows}</ul>`;
+}
+
+async function drawMap(areas, shapes) {
+  const m = ensureMap();
+  await whenStyleLoaded(m);
+  const features = [];
+  for (const a of areas) {
+    const gj = shapes.get(a.globalId);
+    if (!gj) continue;
+    const fs = gj.type === "FeatureCollection" ? gj.features : [gj];
+    for (const f of fs) {
+      if (!f || !f.geometry) continue;
+      features.push({ type: "Feature", geometry: f.geometry, properties: { gid: a.globalId, color: areaColor(a) } });
+    }
+  }
+  const data = { type: "FeatureCollection", features };
+  if (m.getSource("dist")) {
+    m.getSource("dist").setData(data);
+  } else {
+    m.addSource("dist", { type: "geojson", data });
+    m.addLayer({ id: "dist-fill", type: "fill", source: "dist",
+      paint: { "fill-color": ["get", "color"], "fill-opacity": 0.45 } });
+    m.addLayer({ id: "dist-line", type: "line", source: "dist",
+      paint: { "line-color": ["get", "color"], "line-width": 1 } });
+    m.on("click", "dist-fill", (e) => {
+      const seen = new Set();
+      const html = e.features.map(f => f.properties.gid).filter(g => !seen.has(g) && seen.add(g))
+        .map(g => popupHtml(currentAreas.get(g))).join('<hr style="border:0;border-top:1px solid #ddd">');
+      new maplibregl.Popup({ maxWidth: "320px" }).setLngLat(e.lngLat).setHTML(html).addTo(m);
+    });
+    m.on("mouseenter", "dist-fill", () => { m.getCanvas().style.cursor = "pointer"; });
+    m.on("mouseleave", "dist-fill", () => { m.getCanvas().style.cursor = ""; });
+  }
+  const b = computeWrappedBounds(features);
+  if (b) m.fitBounds(b, { padding: 30, maxZoom: 6, duration: 0 });
+  else m.jumpTo({ center: [0, 20], zoom: 1 });
+}
+
+function renderLegend(areas) {
+  const used = new Set();
+  for (const a of areas) used.add(areaColor(a));
+  const items = [...MEANS, { label: "No establishment means", color: MISSING_COLOR },
+    { label: "Datasets disagree", color: MIXED_COLOR }].filter(i => used.has(i.color));
+  $("legend").innerHTML = items.map(i => `<span><i style="background:${i.color}"></i>${esc(i.label)}</span>`).join("");
+}
+
+// ---- rendering --------------------------------------------------------------
+let currentAreas = new Map();
+let currentExport = null;
+
+function recordsSummary(records) {
+  // "WoRMS (native), FishBase (introduced)"
+  const byDs = new Map();
+  for (const r of records) {
+    const k = r.datasetKey;
+    if (!byDs.has(k)) byDs.set(k, { r, means: new Set() });
+    if (r.establishmentMeans) byDs.get(k).means.add(r.establishmentMeans);
+  }
+  return [...byDs.values()].map(({ r, means }) =>
+    link(taxonUrl(r.datasetKey, r.taxonId), r.datasetAlias || r.datasetTitle) +
+    (means.size ? ` <span class="muted">(${esc([...means].join(", "))})</span>` : "")).join("<br>");
+}
+
+function render(ctx) {
+  const { name, byDataset, kept, excluded, mappedDatasets, textOnly, noDist, records, areas, shapes } = ctx;
+
+  const textRecords = records.filter(isText);
+  const mappedRecords = records.filter(r => !isText(r) && mappedDatasets.some(d => d.key === r.datasetKey));
+  const unmapped = areas.filter(a => !shapes.get(a.globalId));
+
+  $("stats").innerHTML = [
+    [byDataset.size, "datasets found"],
+    [kept.length, "after removing projects & older releases"],
+    [mappedDatasets.length, "with mapped distributions"],
+    [areas.length, "distinct areas"],
+    [textRecords.length, "text distributions"],
+  ].map(([n, l]) => `<div class="stat"><b>${n}</b><span>${esc(l)}</span></div>`).join("");
+
+  renderLegend(areas.filter(a => shapes.get(a.globalId)));
+
+  // unmapped areas
+  $("unmapped").innerHTML = unmapped.length ? `<details><summary>Areas without a shape (${unmapped.length})</summary>
+    <div class="body"><ul class="plain">${unmapped.map(a =>
+      `<li>${link(areaUrl(a), a.name || a.globalId)} <span class="muted">${esc(a.globalId)}</span></li>`).join("")}</ul></div></details>` : "";
+
+  // aggregated area table
+  $("areas").innerHTML = areas.length ? `<thead><tr><th>Area</th><th>Id</th><th>Datasets (establishment means)</th></tr></thead><tbody>` +
+    areas.map(a => `<tr><td>${link(areaUrl(a), a.name || a.globalId)}${shapes.get(a.globalId) ? "" : ' <span class="tag warn">no shape</span>'}</td>
+      <td class="muted">${esc(a.globalId)}</td><td>${recordsSummary(a.records)}</td></tr>`).join("") + "</tbody>" : "";
+  $("areas").parentElement.hidden = !areas.length;
+
+  // text distributions
+  const textOnlyKeys = new Set(textOnly.map(d => d.key));
+  $("texts").innerHTML = `<details><summary>Text distributions (${textRecords.length})</summary><div class="body">` +
+    (textRecords.length ? `<ul class="plain">${textRecords.map(r => {
+      const means = [r.establishmentMeans, r.degreeOfEstablishment].filter(Boolean).join(", ");
+      return `<li>${esc(r.area?.name || r.area?.id || "(empty)")}${means ? ` <span class="muted">— ${esc(means)}</span>` : ""}
+        · ${link(taxonUrl(r.datasetKey, r.taxonId), r.datasetAlias || r.datasetTitle)}
+        ${textOnlyKeys.has(r.datasetKey) ? '<span class="tag warn">text only</span>' : ""}</li>`;
+    }).join("")}</ul>` : '<p class="muted">None.</p>') + "</div></details>";
+
+  // per dataset
+  $("datasets").innerHTML = mappedDatasets.length ? mappedDatasets.map(d => {
+    const recs = records.filter(r => r.datasetKey === d.key);
+    const usages = byDataset.get(d.key) || [];
+    const usageHtml = usages.map(u => {
+      const href = ACCEPTED.has(u.status) ? taxonUrl(d.key, u.id) : nameUrl(d.key, u.name?.id || u.id);
+      return `${link(href, u.label || u.name?.scientificName)} <span class="tag">${esc(u.status)}</span>` +
+        (u.accepted ? ` → ${link(taxonUrl(d.key, u.accepted.id), u.accepted.label)}` : "");
+    }).join("<br>");
+    const rows = recs.map(r => {
+      const means = [r.establishmentMeans, r.degreeOfEstablishment, r.threatStatus].filter(Boolean).join(", ");
+      const area = isText(r) ? esc(r.area?.name || r.area?.id) + ' <span class="tag warn">text</span>'
+        : link(areaUrl(r.area), r.area.name || r.area.globalId);
+      return `<tr><td>${area}</td><td class="muted">${isText(r) ? "" : esc(r.area.globalId)}</td><td>${esc(means)}</td></tr>`;
+    }).join("");
+    return `<div class="ds"><h3>${link(datasetUrl(d.key), d.title)}${d.alias && d.alias !== d.title ? ` <span class="muted">(${esc(d.alias)})</span>` : ""}</h3>
+      <div class="meta">key ${d.key} · ${esc(d.origin)}${d.version ? ` · ${esc(d.version)}` : ""} · ${recs.length} distribution records</div>
+      <div>${usageHtml}</div>
+      <details><summary>Distribution records (${recs.length})</summary><div class="body table-wrap" style="border:0">
+      <table><thead><tr><th>Area</th><th>Id</th><th>Establishment</th></tr></thead><tbody>${rows}</tbody></table></div></details></div>`;
+  }).join("") : '<p class="muted">No dataset has distribution records with a gazetteer area.</p>';
+
+  // excluded
+  const ex = [
+    ...excluded,
+    ...textOnly.map(d => ({ ...d, reason: "text distributions only" })),
+    ...noDist.map(d => ({ ...d, reason: "no distribution records" })),
+  ].sort((a, b) => a.reason.localeCompare(b.reason) || a.key - b.key);
+  $("excluded").innerHTML = `<details><summary>Datasets left out (${ex.length})</summary><div class="body"><ul class="plain">` +
+    ex.map(d => `<li>${link(datasetUrl(d.key), dsLabel(d))} <span class="muted">${d.key}</span> <span class="tag warn">${esc(d.reason)}</span></li>`).join("") +
+    "</ul></div></details>";
+
+  // export: all aggregated records = mapped datasets' records + all text records
+  const exportRecords = [...mappedRecords, ...textRecords];
+  currentExport = {
+    query: name,
+    api: API,
+    created: new Date().toISOString(),
+    datasets: mappedDatasets.map(d => ({ key: d.key, title: d.title, alias: d.alias, origin: d.origin, version: d.version })),
+    unmappedAreas: unmapped.map(a => a.globalId),
+    records: exportRecords,
+  };
+  $("dlinfo").textContent = `${exportRecords.length} records (${mappedRecords.length} with areas, ${textRecords.length} text)`;
+}
+
+$("dl").addEventListener("click", () => {
+  if (!currentExport) return;
+  const blob = new Blob([JSON.stringify(currentExport, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `distributions-${currentExport.query.trim().replace(/[^A-Za-z0-9]+/g, "_")}.json`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+});
+
+// ---- main -------------------------------------------------------------------
+let running = false;
+async function run(name) {
+  if (running) return;
+  running = true;
+  $("go").disabled = true;
+  try {
+    setStatus("Searching…");
+    const byDataset = await searchUsages(name);
+    if (!byDataset.size) {
+      $("results").hidden = true;
+      setStatus(`No dataset contains the name “${name}”.`);
+      return;
+    }
+    const { kept, excluded } = await classifyDatasets([...byDataset.keys()]);
+    const records = await loadDistributions(kept, byDataset);
+
+    const mappedDatasets = [], textOnly = [], noDist = [];
+    for (const d of kept) {
+      const recs = records.filter(r => r.datasetKey === d.key);
+      if (recs.some(r => !isText(r))) mappedDatasets.push(d);
+      else if (recs.length) textOnly.push(d);
+      else noDist.push(d);
+    }
+    mappedDatasets.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+
+    // aggregate areas
+    currentAreas = new Map();
+    for (const r of records) {
+      if (isText(r)) continue;
+      const gid = r.area.globalId || `${r.area.gazetteer}:${r.area.id}`;
+      if (!currentAreas.has(gid)) currentAreas.set(gid, { globalId: gid, gazetteer: r.area.gazetteer, id: r.area.id, name: r.area.name, records: [] });
+      const a = currentAreas.get(gid);
+      if (!a.name && r.area.name) a.name = r.area.name;
+      a.records.push(r);
+    }
+    const areas = [...currentAreas.values()].sort((a, b) => (a.name || a.globalId).localeCompare(b.name || b.globalId));
+
+    const shapeList = await pool(areas, 6,
+      a => getJson(`${API}/vocab/area/${a.gazetteer}:${encodeURIComponent(a.id)}.geojson`, { allow404: true }),
+      (d, n) => setStatus(`Loading area shapes… ${d}/${n}`));
+    const shapes = new Map();
+    areas.forEach((a, i) => { const s = shapeList[i]; if (s && !s.error) shapes.set(a.globalId, s); });
+
+    $("results").hidden = false;
+    render({ name, byDataset, kept, excluded, mappedDatasets, textOnly, noDist, records, areas, shapes });
+    await drawMap(areas, shapes);
+    map.resize();
+    setStatus(`Done: ${mappedDatasets.length} of ${byDataset.size} datasets have mapped distributions for “${name}”.`);
+  } catch (e) {
+    console.error(e);
+    setStatus(`Error: ${e.message}`, true);
+  } finally {
+    running = false;
+    $("go").disabled = false;
+  }
+}
+
+$("f").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = $("q").value.trim();
+  if (!name) return;
+  const p = new URLSearchParams(location.search);
+  p.set("q", name);
+  history.pushState(null, "", `?${p}`);
+  run(name);
+});
+
+window.addEventListener("popstate", () => {
+  const q = new URLSearchParams(location.search).get("q");
+  if (q) { $("q").value = q; run(q); }
+});
+
+const initial = params.get("q");
+if (initial) { $("q").value = initial; run(initial); }
+</script>
+</body>
+</html>
